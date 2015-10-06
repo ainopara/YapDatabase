@@ -288,32 +288,110 @@
 		return [oldChangeSets copy];
 	}
 }
+
 - (NSArray *)changeSetsFromCurrentCommit
 {
-	NSAssert(self.isPendingQueue, @"Method can only be invoked on pendingQueue");
-	
-	if ((newChangeSets == nil) && ([newChangeSetsDict count] > 0))
-	{
-		NSMutableArray *orderedChangeSets = [NSMutableArray arrayWithCapacity:[newChangeSetsDict count]];
-		
-		NSString *baseUUID = [[NSUUID UUID] UUIDString];
-		NSString *prevChangeSetUUID = [[oldChangeSets lastObject] uuid];
-		
-		for (YDBCKChangeSet *newChangeSet in [newChangeSetsDict objectEnumerator])
-		{
-			NSString *uuid = [NSString stringWithFormat:@"%@@%lu", baseUUID, (unsigned long)[orderedChangeSets count]];
-			
-			newChangeSet.uuid = uuid;
-			newChangeSet.prev = prevChangeSetUUID;
-			prevChangeSetUUID = newChangeSet.uuid;
-			
-			[orderedChangeSets addObject:newChangeSet];
-		}
-		
-		newChangeSets = [orderedChangeSets copy];
-	}
-	
-	return newChangeSets;
+    NSAssert(self.isPendingQueue, @"Method can only be invoked on pendingQueue");
+    NSInteger countLimit = 100;
+    if ((newChangeSets == nil) && ([newChangeSetsDict count] > 0))
+    {
+        NSMutableArray *orderedChangeSets = [NSMutableArray arrayWithCapacity:[newChangeSetsDict count]];
+        
+        NSString *baseUUID = [[NSUUID UUID] UUIDString];
+        NSString *prevChangeSetUUID = [[oldChangeSets lastObject] uuid];
+        
+        for (YDBCKChangeSet *newChangeSet in [newChangeSetsDict objectEnumerator])
+        {
+            NSArray *recordIDsToDelete = newChangeSet.recordIDsToDelete;
+            if ((newChangeSet->modifiedRecords == nil || [newChangeSet->modifiedRecords count] < countLimit) && (recordIDsToDelete == nil || [recordIDsToDelete count] < countLimit))
+            {
+                // Nothing to do if change set do not exceed limit
+                NSString *uuid = [NSString stringWithFormat:@"%@@%lu", baseUUID, (unsigned long)[orderedChangeSets count]];
+                newChangeSet.uuid = uuid;
+                newChangeSet.prev = prevChangeSetUUID;
+                prevChangeSetUUID = newChangeSet.uuid;
+                
+                [orderedChangeSets addObject:newChangeSet];
+            } else {
+                // Change set will be splited to small sets
+                NSUInteger cursorToSave = 0;
+                NSUInteger cursorToDelete = 0;
+                YDBCKChangeSet *splitChangeSet = nil;
+                // Process modified records
+                for (CKRecordID *key in [newChangeSet->modifiedRecords allKeys])
+                {
+                    if (splitChangeSet == nil)
+                    {
+                        splitChangeSet = [[YDBCKChangeSet alloc] initWithDatabaseIdentifier:nil];
+                        splitChangeSet->modifiedRecords = [[NSMutableDictionary alloc] init];
+                    }
+                    
+                    [splitChangeSet->modifiedRecords setObject:[newChangeSet->modifiedRecords objectForKey:key] forKey:key];
+                    cursorToSave += 1;
+                    
+                    if (cursorToSave % countLimit == 0)
+                    {
+                        NSString *uuid = [NSString stringWithFormat:@"%@@%lu", baseUUID, (unsigned long)[orderedChangeSets count]];
+                        splitChangeSet.uuid = uuid;
+                        splitChangeSet.prev = prevChangeSetUUID;
+                        prevChangeSetUUID = splitChangeSet.uuid;
+                        
+                        [orderedChangeSets addObject:splitChangeSet];
+                        splitChangeSet = nil;
+                    }
+                }
+                if (splitChangeSet != nil)
+                {
+                    NSString *uuid = [NSString stringWithFormat:@"%@@%lu", baseUUID, (unsigned long)[orderedChangeSets count]];
+                    splitChangeSet.uuid = uuid;
+                    splitChangeSet.prev = prevChangeSetUUID;
+                    prevChangeSetUUID = splitChangeSet.uuid;
+                    
+                    [orderedChangeSets addObject:splitChangeSet];
+                    splitChangeSet = nil;
+                }
+                
+                // Process deleted Records
+                for (id recordID in newChangeSet->deletedRecordIDs)
+                {
+                    if (splitChangeSet == nil)
+                    {
+                        splitChangeSet = [[YDBCKChangeSet alloc] initWithDatabaseIdentifier:nil];
+                        splitChangeSet->deletedRecordIDs = [[NSMutableArray alloc] init];
+                    }
+                    
+                    [splitChangeSet->deletedRecordIDs addObject:recordID];
+                    cursorToDelete += 1;
+                    
+                    if (cursorToDelete % countLimit == 0)
+                    {
+                        NSString *uuid = [NSString stringWithFormat:@"%@@%lu", baseUUID, (unsigned long)[orderedChangeSets count]];
+                        splitChangeSet.uuid = uuid;
+                        splitChangeSet.prev = prevChangeSetUUID;
+                        prevChangeSetUUID = splitChangeSet.uuid;
+                        
+                        [orderedChangeSets addObject:splitChangeSet];
+                        splitChangeSet = nil;
+                    }
+                }
+                if (splitChangeSet != nil)
+                {
+                    NSString *uuid = [NSString stringWithFormat:@"%@@%lu", baseUUID, (unsigned long)[orderedChangeSets count]];
+                    splitChangeSet.uuid = uuid;
+                    splitChangeSet.prev = prevChangeSetUUID;
+                    prevChangeSetUUID = splitChangeSet.uuid;
+                    
+                    [orderedChangeSets addObject:splitChangeSet];
+                    splitChangeSet = nil;
+                }
+            }
+            
+        }
+        
+        newChangeSets = [orderedChangeSets copy];
+    }
+    
+    return newChangeSets;
 }
 
 /**
