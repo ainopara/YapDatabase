@@ -2963,17 +2963,23 @@ static BOOL ClassVersionsAreCompatible(int oldClassVersion, int newClassVersion)
 			}
 			else
 			{
-				// There's no use in us writing the record to the database right now.
-				// We only write the system fields anyway, and they have not changed yet.
-				// They won't be changed until the corresponding CKModifyRecordsOperation completes.
-				// And it's at that point that we'll write the updated record to the database.
-				
-				sanitizedRecord = [dirtyRecordTableInfo.dirty_record sanitizedCopy];
-				
-				// We may, however, need to update the metadata about the record.
-				// That is, the ownerCount value.
-				
-				[self maybeUpdateRecordTableRowWithHash:hash info:dirtyRecordTableInfo];
+                if (dirtyRecordTableInfo.remoteMerge) {
+                    [self updateRecordTableRowWithHash:hash
+                                                record:dirtyRecordTableInfo.dirty_record
+                                    outSanitizedRecord:&sanitizedRecord];
+                } else {
+                    // There's no use in us writing the record to the database right now.
+                    // We only write the system fields anyway, and they have not changed yet.
+                    // They won't be changed until the corresponding CKModifyRecordsOperation completes.
+                    // And it's at that point that we'll write the updated record to the database.
+
+                    sanitizedRecord = [dirtyRecordTableInfo.dirty_record sanitizedCopy];
+
+                    // We may, however, need to update the metadata about the record.
+                    // That is, the ownerCount value.
+
+                    [self maybeUpdateRecordTableRowWithHash:hash info:dirtyRecordTableInfo];
+                }
 			}
 			
 			YDBCKCleanRecordTableInfo *cleanRecordTableInfo =
